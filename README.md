@@ -30,6 +30,7 @@
 ### 1. 安装依赖
 
 ```bash
+git clone https://github.com/hufeide/dsh-sidebar-assistant
 cd dsh-sidebar-assistant
 pnpm install
 ```
