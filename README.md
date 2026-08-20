@@ -1,18 +1,19 @@
 # dsh-sidebar-assistant（选中即问）
 
-一个面向 DSH（DeepSeek Harness）Web 界面的侧边栏助手插件。在 Web 聊天界面里**选中任意文本**，即可基于所选内容发起提问，模型会参考**当前会话的对话历史**与**选中的引用文字**作答，并在浮层面板里**流式**显示思考过程与最终回答。
+一个面向 DSH（DeepSeek Harness）Web 界面的侧边栏助手插件。在 Web 聊天界面里**选中任意文本**，即可基于所选内容发起提问，模型会参考**与选中文字相关的当前会话片段**与**选中的引用文字**作答，并在浮层面板里**流式**显示思考过程与最终回答。
 
 使用场景：deepseek主对话对连续话题的理解问答，dsh-sidebar-assistant插件生成的对话框，主要用户临时不解进行回答，这样不污染主对话内容，并且省token，因为插件对话框只引用选中文字及其涉及的这段对话。当有临时发问，请在插件会话问吧。
 
 ## 功能特性
 
 - **选中即问**：在 Web 界面选中一段文字，点击文字下方“提问”，浮层面板自动弹出，所选文字作为引用。
+- **按引用过滤历史**：自动只把**当前会话里文本包含选中文字的对话片段**作为上下文；同时带上其对话伙伴（user↔assistant 配对保留）。未被选中文本"触及"的对话不会进入历史，最大化节省 token。
 - **流式输出**：回答实时逐字渲染，无需等待全部生成完毕。
 - **思考过程折叠**：模型的思考过程（reasoning）与最终回答分开显示；思考过程默认折叠，可点击「思考过程」展开查看。
-- **会话上下文**：自动带入**选中所处会话**的对话历史作为上下文（不含其他历史会话），并严格以引用文字为准、不臆测引用之外的事实。
+- **严格以引用为准**：模型被提示"参考当前会话历史了解上下文，不要臆测引用之外的事实"，回答只围绕选中文字展开。
 - **面板可拖拽 / 可缩放**：标题栏拖拽移动浮层；四角与四边拖拽调整面板大小。
 - **Enter 提交**：输入问题后直接按 `Enter` 即可提问。
-- **引用当前会话**：自动带入选中所处会话的历史消息（仅当前会话，不混入其他会话）。
+- **仅当前会话**：历史只来自选中所处的会话，不混入其他会话。
 
 ![alt text](assets/sidebar-help.png)
 
@@ -43,9 +44,29 @@ pnpm run build
 
 ### 3. 安装到 DSH
 
+> **⚠️ 不要执行 `add dsh-sidebar-assistant`** —— 本插件尚未发布到 npm，那个名字在 npm registry 是 404，会被 `pnpm fetch 404` 拒绝。`dsh plugin add` 之后的参数会原样交给 `pnpm`，**必须传「路径」**而不是包名。
+
+**最省心的一行（推荐）**：
+
 ```bash
+pnpm run install-plugin
+```
+
+这条 script 内部会 build → `dsh plugin --profile web add link:$PWD`，把当前 checkout 用 link 语义装到 web profile，再提示你下一步。
+
+**或手动指定路径**：
+
+```bash
+# 在本插件目录下：'.' 即当前目录
+npx -p @deepseek-ai/dsh dsh plugin --profile web add .
+
+# 或者从任意目录用绝对路径（最稳，避免 workspace 误识别）
 npx -p @deepseek-ai/dsh dsh plugin --profile web add dsh-sidebar-assistant
 ```
+
+等价于在 profile 目录下执行 `pnpm add <path>`，用 `link:` 语义把 checkout 软链进 profile 的 `node_modules`。
+
+> 注意：插件 `package.json` 里的 `name` 是 `dsh-sidehelper`，所以安装后 profile 的依赖 key 也是 `dsh-sidehelper`，而不是目录名 `dsh-sidebar-assistant`。
 
 安装后插件会以 `link:` 方式记录在 profile 的 `package.json` 中，源码目录的改动在重新构建后即可生效。
 
@@ -106,9 +127,10 @@ dsh-sidebar-assistant/
 │   │   ├── persistence.ts# 问答记录持久化
 │   │   └── stream.ts     # 流式文本累积工具
 │   ├── client/
-│   │   ├── index.ts      # client 侧：注入、选中触发、SSE 拉取
-│   │   ├── panel.ts      # 浮层面板 UI（拖拽/缩放/流式/思考折叠）
-│   │   └── selection.ts  # 选中文本监听
+│   │   ├── index.ts          # client 侧：注入、选中触发、SSE 拉取
+│   │   ├── history-filter.ts # 按引用文字过滤 turn 的纯函数（命中 + 配对）
+│   │   ├── panel.ts          # 浮层面板 UI（拖拽/缩放/流式/思考折叠）
+│   │   └── selection.ts      # 选中文本监听
 │   └── types/
 │       └── index.ts      # 共享类型
 ├── lib/                  # 构建产物
@@ -125,6 +147,8 @@ dsh-sidebar-assistant/
 | 面板没出现 | 未选中所处会话 / 插件未生效 | 确认进入会话并选中文本；重启 harness |
 | 一直「生成中…」 | 浏览器或 host 端请求挂起 | host 端已内置 30s LLM 超时、前端 65s 兜底；检查 Provider 网络/凭证 |
 | `host ask failed: HTTP 500` | Provider 未注册 / 凭证或端点错误 | 检查 `.dsh/settings.yaml` 的 `provider`、`baseURL` 与凭证；参考日志 `.sidehelper/ask-error.log` |
+| 安装报 `[ERR_PNPM_FETCH_404] ... dsh-sidebar-assistant` | 把目录名当成 npm 包名在 npm registry 找了，本插件尚未发布 | 不要传包名；改用路径：`add .`（在插件目录下）或 `add /abs/path`；最稳是一键脚本：`pnpm run install-plugin` |
+| 安装报 `workspace declares no dsh.bundle` | `add .` 让 pnpm 把 cwd 当成 workspace root，link 错对象 | 改用绝对路径：`add link:/home/fei/workspace/dsh-sidebar-assistant` 或 `add /home/fei/workspace/dsh-sidebar-assistant`；删除误加的 `workspace` 依赖：`dsh plugin --profile web remove workspace` |
 | 改代码不生效 | `link:` 安装需重新构建 + 完整重启 | 重新 `pnpm run build`，并 `pkill -9 -f "dsh web"` 后重启 |
 | 请求 `/plugins/.../client.js` 失败 | 缓存 / harness 未重启 | 完全重启 harness，浏览器强制刷新 |
 

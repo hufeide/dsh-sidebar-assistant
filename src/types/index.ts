@@ -26,6 +26,16 @@ export interface AskRequest {
   question: string
   /** 选中所处会话的历史消息（已过滤其他会话），按时间正序；空数组表示无历史。 */
   history?: HistoryMessage[]
+  /** 当前会话未过滤的 turn 总条数（仅用于诊断 / UI 提示，可选）。 */
+  totalTurns?: number
+}
+
+/** host → client 的 diagnostics payload：客户端在面板 UI 上展示「过滤后上下文」用了哪几轮。 */
+export interface HistoryDiagnostics {
+  totalTurns: number
+  keptTurns: number
+  quotedChars: number
+  quotedPreview: string
 }
 
 export interface AnswerRecord {

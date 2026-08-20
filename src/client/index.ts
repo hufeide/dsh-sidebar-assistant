@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-runtime'
 import { createSelectionWatcher } from './selection.js'
 import { createQuestionPanel } from './panel.js'
+import { filterTurnsByQuote } from './history-filter.js'
 
 export const inject = ['sessions'] as const
 
@@ -10,6 +11,7 @@ interface AskBody {
   quoted: string
   question: string
   history?: Array<{ role: 'user' | 'assistant' | 'system'; text: string }>
+  totalTurns?: number
 }
 
 interface ClientNodeText {
@@ -41,37 +43,46 @@ function extractAssistantText(blocks: readonly unknown[]): string {
   return out.trim()
 }
 
-/** 抽取「选中所处会话」的历史消息：仅遍历 binding.session.getSnapshot().nodes，
- *  过滤掉其他会话（binding 只解析当前 sessionId，天然隔离）。
- *  按时间（seq）顺序、规范化 role，丢弃空文本。 */
-function extractSessionHistory(sessions: any, currentId: string): ClientNodeText[] {
-  if (!currentId) return []
+/** 抽取「选中所处会话」的历史消息，并按"用户引用文字"过滤。
+ *  - 仅遍历 binding.session.getSnapshot().nodes，过滤掉其他会话。
+ *  - 按时间（seq）顺序、规范化 role，丢弃空文本。
+ *  - 抽取得到全量 turn 之后，调用 filterTurnsByQuote 做引用命中 + 回合配对，
+ *    只把与引用相关的 user/assistant 保留下来送入 prompt。
+ *    quoted 为空 / 无命中时返回 []，模型只看到引用 + 问题本身。
+ *  - 返回 [filtered, totalTurns]：前者直接送入 host；后者供面板 UI 与日志诊断用。 */
+function extractSessionHistory(
+  sessions: any,
+  currentId: string,
+  quoted: string,
+): { filtered: ClientNodeText[]; totalTurns: number } {
+  if (!currentId) return { filtered: [], totalTurns: 0 }
   const binding = typeof sessions?.binding === 'function' ? sessions.binding(currentId) : undefined
   const session = binding?.session
-  if (!session || typeof session.getSnapshot !== 'function') return []
+  if (!session || typeof session.getSnapshot !== 'function') return { filtered: [], totalTurns: 0 }
   const snap = session.getSnapshot()
   const nodes = Array.isArray(snap?.nodes) ? snap.nodes : []
-  const out: ClientNodeText[] = []
+  const all: ClientNodeText[] = []
   for (const n of nodes) {
     if (!n || typeof n !== 'object') continue
     const kind = (n as { kind?: unknown }).kind
     if (kind === 'user') {
       const text = extractContentText((n as { content?: readonly unknown[] }).content ?? [])
-      if (text) out.push({ role: 'user', text })
+      if (text) all.push({ role: 'user', text })
     } else if (kind === 'steering') {
       // steering 来自同一用户追加的消息，归到 user。
       const text = extractContentText((n as { content?: readonly unknown[] }).content ?? [])
-      if (text) out.push({ role: 'user', text })
+      if (text) all.push({ role: 'user', text })
     } else if (kind === 'assistant') {
       const text = extractAssistantText((n as { blocks?: readonly unknown[] }).blocks ?? [])
-      if (text) out.push({ role: 'assistant', text })
+      if (text) all.push({ role: 'assistant', text })
     } else if (kind === 'context') {
       const text = extractContentText((n as { content?: readonly unknown[] }).content ?? [])
-      if (text) out.push({ role: 'system', text })
+      if (text) all.push({ role: 'system', text })
     }
     // 其他 kind（tool-result / model-retry / turn-error / 等）跳过
   }
-  return out
+  const filtered = filterTurnsByQuote(all, quoted)
+  return { filtered, totalTurns: all.length }
 }
 
 /** 流片段：'delta' = 正文增量，'think' = 思考增量，'done' = 结束（带完整 answer），'error' = 失败。 */
@@ -145,10 +156,24 @@ export function apply(ctx: Context): void {
   const watcher = createSelectionWatcher(document, host, (quoted, rect) => {
     void rect
     const sessionId = sessions.list.getSnapshot().current ?? ''
-    // 抽取「选中所处会话」的历史。其他会话历史不会进入（binding 只解析当前 session）。
-    const history = extractSessionHistory(sessions, sessionId)
-    panel.open(quoted, (question, onPiece) =>
-      askHost({ sessionId, quoted, question, history }, onPiece),
+    // 抽取「选中所处会话」的历史，并按"用户引用文字"过滤：
+    //   只把命中引用的 turn 与其对话伙伴送入 prompt，其他 turn 不进入 history，
+    //   大幅减少送入上下文的 token 开销，与提问主题保持一致。
+    const { filtered, totalTurns } = extractSessionHistory(sessions, sessionId, quoted)
+    // 诊断日志：方便定位 "为什么历史看起来还是全部" 这类问题。
+    const diag = {
+      sessionId,
+      quotedChars: quoted.length,
+      quotedPreview: quoted.slice(0, 60),
+      totalTurns,
+      keptTurns: filtered.length,
+      kept: filtered.map((t) => `${t.role}:${t.text.slice(0, 40)}`),
+    }
+    console.info('[sidehelper] context filter', diag)
+    panel.open(
+      quoted,
+      (question, onPiece) =>
+        askHost({ sessionId, quoted, question, history: filtered, totalTurns }, onPiece),
     )
   })
 

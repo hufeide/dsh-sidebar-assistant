@@ -152,6 +152,12 @@ export function apply(ctx: Context, config: SideHelperConfig): void {
 
     const system = buildSystemPrompt(config.systemPrompt, config.personaText)
     const userContent = buildUserMessage(req.quoted, req.question, req.history)
+    // 诊断：trace 出实际送入 prompt 的历史条数 / 总条数。
+    ctx.logger?.info?.(
+      `[sidehelper] ask sessionId=${req.sessionId} quotedChars=${req.quoted.length} ` +
+        `historyKept=${req.history?.length ?? 0}/${req.totalTurns ?? '?'} ` +
+        `quotedPreview=${JSON.stringify(req.quoted.slice(0, 60))}`,
+    )
     const detected = await detectCallConfig()
     const resolved = await (ctx.llm as LlmRuntimeT).resolveCallConfig({
       provider: detected.provider,

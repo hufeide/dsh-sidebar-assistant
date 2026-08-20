@@ -22,7 +22,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && tsdown",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "install-plugin": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && tsdown && npx -p @deepseek-ai/dsh dsh plugin --profile web add link:\"$PWD\""
   },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
