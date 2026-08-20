@@ -1,0 +1,10 @@
+- insert:
+    - id: sidehelper
+      name: dsh-sidehelper
+      config:
+        enabled: true
+        model: ""
+        personaText: ""
+        persistDir: ""
+        maxQuotedChars: 4000
+        placeholder: "输入你的问题（所选文字将作为引用）…"

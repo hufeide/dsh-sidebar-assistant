@@ -1,0 +1,4 @@
+# pnpm 构建设置：允许 esbuild 运行其 postinstall（下载平台二进制）。
+# pnpm 11 使用 allowBuilds 布尔映射格式。
+allowBuilds:
+  esbuild: true
